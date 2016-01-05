@@ -254,8 +254,8 @@ static int aprsis_queue_(struct aprsis *A, const char * const addr, const char q
 // APRS-IS communicator
 static void aprsis_reconnect(struct aprsis *A)
 {
-	struct addrinfo req, *ai, *a, *ap[21];
-	int i, n;
+	struct addrinfo req, *ai, *a;
+	int i;
 	char *s;
 	char aprsislogincmd[3000];
 	const char *errstr;
@@ -265,8 +265,8 @@ static void aprsis_reconnect(struct aprsis *A)
 
 	aprsis_close(A, "reconnect");
 
-	if (!A->H) {
-		A->H = AISh[0];
+	if (A->H == NULL) {
+		A->H = AISh[AIShindex=0];
 	} else {
 		++AIShindex;
 		if (AIShindex >= AIShcount)
@@ -286,11 +286,7 @@ static void aprsis_reconnect(struct aprsis *A)
 	req.ai_socktype = SOCK_STREAM;
 	req.ai_protocol = IPPROTO_TCP;
 	req.ai_flags = 0;
-#if 1
-	req.ai_family = AF_UNSPEC;	/* IPv4 and IPv6 are both OK */
-#else
-	req.ai_family = AF_INET;	/* IPv4 only */
-#endif
+	req.ai_family = AF_UNSPEC;
 	ai = NULL;
 
 
@@ -313,27 +309,7 @@ static void aprsis_reconnect(struct aprsis *A)
 		return;
 	}
 
-	/* Count the addresses */
-	memset(ap, 0, sizeof(ap));
-	for (n = 0, a = ai; a; a = a->ai_next, ++n) {
-		if (n < 20)
-			ap[n] = a;
-		else
-			break;
-	}
-	ap[n] = NULL;
-
-	if (n > 1) {		/* more than one ?  choose one at random as the first address,
-				   then go through the address list in new sequence. */
-		n = rand() % n;
-		if (n > 0) {
-			a = ap[n];
-			ap[n] = ap[0];
-			ap[0] = a;
-		}
-	}
-
-	for (n = 0; (a = ap[n]) && A->server_socket < 0; ++n) {
+	for (a = ai; (a != NULL) && (A->server_socket < 0); a = a->ai_next) {
 
 		errstr = "socket formation failed";
 
@@ -342,14 +318,34 @@ static void aprsis_reconnect(struct aprsis *A)
 			       a->ai_protocol);
 		errcode = errno;
 
-		if (A->server_socket < 0)
+		if (A->server_socket < 0) {
+			if (debug) printf("aprsis failed to open socket.\n");
 			continue;
+		}
+
+		if(debug) {
+			char addrstr[INET6_ADDRSTRLEN];
+			void *sin_ptr = NULL;
+			switch (a->ai_family) {
+				case AF_INET:
+					sin_ptr = &((struct sockaddr_in *) a->ai_addr)->sin_addr;
+					break;
+				case AF_INET6:
+					sin_ptr = &((struct sockaddr_in6 *) a->ai_addr)->sin6_addr;
+					break;
+			}
+			inet_ntop (a->ai_family, sin_ptr, addrstr, INET6_ADDRSTRLEN);
+
+			printf("aprsis connection attempt IPv%d address: %s\n",
+					(a->ai_family == PF_INET6) ? 6 : 4, addrstr);
+		}
 
 		errstr = "connection failed";
 		i = connect(A->server_socket, a->ai_addr, a->ai_addrlen);
 		errcode = errno;
 
 		if (i < 0) {
+			if (debug) printf("aprsis connection failed.\n");
 			/* If connection fails, try next possible address */
 			close(A->server_socket);
 			A->server_socket = -1;
@@ -1272,7 +1268,7 @@ int aprsis_config(struct configfile *cf)
                 }
 
 		AISh = realloc(AISh, sizeof(AISh[0]) * (AIShcount + 1));
-		AISh[AIShcount] = AIH;
+		AISh[AIShcount++] = AIH;
 	}
 	return has_fault;
 }
